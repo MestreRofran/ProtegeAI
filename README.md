@@ -1,14 +1,4 @@
-# ProtegeAI 1.3 — PWA GitHub Pages
-
-Arquivos prontos para publicar diretamente na raiz de um repositório GitHub.
-
-## Publicação
-
-1. Crie um repositório no GitHub (por exemplo, `ProtegeAI`). **Não envie backups, senhas ou arquivos `ProtegeAI_dados.json` para ele.**
-2. Descompacte e envie **o conteúdo desta pasta** para a raiz do repositório (`index.html`, `manifest.webmanifest`, `sw.js`, `icons/`).
-3. Em **Settings → Pages**, selecione **Deploy from a branch**, branch `main` e pasta `/ (root)`.
-4. Abra `https://SEU_USUARIO.github.io/ProtegeAI/` em HTTPS, entre e use **Configurações → Instalar aplicativo** (ou o menu do navegador).
-5. Na primeira abertura por essa nova origem, importe um backup criptografado do cofre anterior, se houver. O armazenamento de `file://` e o do HTTPS são **separados**.
+# ProtegeAI APP PWA
 
 ## Segurança e armazenamento
 
@@ -23,4 +13,4 @@ Arquivos prontos para publicar diretamente na raiz de um repositório GitHub.
 
 Em celulares, a instalação e a disponibilidade das APIs de arquivos variam por navegador e versão do sistema. O PWA não garante acesso persistente à pasta nem biometria em todos os aparelhos. Use HTTPS e verifique os botões de status antes de depender apenas do dispositivo.
 
-Versão: 1.3 · 11/10/2026
+Versão: 1.3 a 1.7 · 11/10/2026
