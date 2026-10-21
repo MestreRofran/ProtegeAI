@@ -1,5 +1,5 @@
 /* ProtegeAI — cache apenas dos arquivos públicos do aplicativo. Nunca armazenar o cofre/backup em Cache Storage. */
-const CACHE='protegeai-shell-v3.0';
+const CACHE='protegeai-shell-v3.3';
 const SHELL=['./','./index.html','./manifest.webmanifest','./icons/icon-192.png','./icons/icon-512.png','./icons/icon-maskable-512.png'];
 self.addEventListener('install',event=>{event.waitUntil(caches.open(CACHE).then(cache=>cache.addAll(SHELL)).then(()=>self.skipWaiting()))});
 self.addEventListener('activate',event=>{event.waitUntil(caches.keys().then(keys=>Promise.all(keys.filter(k=>k.startsWith('protegeai-shell-')&&k!==CACHE).map(k=>caches.delete(k)))).then(()=>self.clients.claim()))});
