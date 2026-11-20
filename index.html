@@ -799,7 +799,7 @@ function trackVaultChanges(previous,current){
  current.syncJournal=current.syncJournal.slice(-500);
  pruneTombstones(current);
 }
-function changed({render=false}={}){if(!data||!key)return;ensureVaultPreferences(data);if(data.shareSettings)propagateSharedPreferences(data,active());trackVaultChanges(persistedShadow,data);data.revision++;data.updatedAt=Date.now();cacheWritePending=true;let snap=structuredClone(data);persistedShadow=structuredClone(snap);storageState(false,'saving');persistChain=persistChain.catch(()=>{}).then(async()=>{const e=await encodeVault(snap,key,envelope.salt,envelope.iterations);await dbPut('vault',e);envelope=e;await dbPut('localVault:'+e.vaultId,e);await saveLocalClock();if(data?.revision===e.revision)cacheWritePending=false;if(!cloudOnly()&&folder&&!folderConflict)await writeFolder(e);else storageState(false);if(cloudEnabled()){await markCloudPending();if(fbUser)queueCloudSave(e)}}).catch(e=>{storageState(false);toast('Falha ao salvar; não feche o aplicativo.',true);console.error('Falha na persistência',e.name)});if(render)renderHome();return persistChain}
+function changed({render=false}={}){if(!data||!key)return;ensureVaultPreferences(data);if(data.shareSettings)propagateSharedPreferences(data,active());trackVaultChanges(persistedShadow,data);data.revision++;data.updatedAt=Date.now();cacheWritePending=true;let snap=structuredClone(data);persistedShadow=structuredClone(snap);storageState(false,'saving');persistChain=persistChain.catch(()=>{}).then(async()=>{const e=await encodeVault(snap,key,envelope.salt,envelope.iterations);await dbPut('vault',e);envelope=e;await dbPut('localVault:'+e.vaultId,e);await saveLocalClock();if(data?.revision===e.revision)cacheWritePending=false;if(cloudEnabled()){await markCloudPending();if(fbUser)queueCloudSave(e,true)}if(!cloudOnly()&&folder&&!folderConflict)await withTimeout(writeFolder(e),20000,'Gravação na pasta');else storageState(false)}).catch(e=>{storageState(false);toast('Falha ao salvar; não feche o aplicativo.',true);console.error('Falha na persistência',e.name)});if(render)renderHome();return persistChain}
 function updateTheme(){document.body.className=active()?.prefs.theme||'dark';let tc=document.querySelector('meta[name="theme-color"]');tc.content=active()?.prefs.theme==='light'?'#f3f6f9':'#101317'}
 function unlockUI(){if(!data)return;persistedShadow=structuredClone(data);applySavedDeviceConfig();if(fbUser&&cloudEnabled()&&envelope)queueMicrotask(()=>{if(navigator.onLine)queueCloudSave(envelope);else markCloudPending()});ensureVaultPreferences(data);$('#authRoot').innerHTML='';updateTheme();renderHome();resetActivity();
  // Conferência silenciosa: a senha/biometria libera apenas o cofre, não a pasta.
@@ -2306,7 +2306,7 @@ async function storeMergedLocal(snapshot,encoded){
  await saveLocalClock();await markCloudPending();renderHome();
 }
 
-async function queueCloudSave(candidate){
+async function queueCloudSave(candidate,skipWait=false){
  if(!firebaseConfigured()){cloudSyncState='error';cloudSyncInfo='Firebase não configurado neste aplicativo.';refreshCloudUi();return false}
  if(!fb||!fbUser){cdStamp('sem sessão Firebase ativa (SDK carregado: '+(fb?'sim':'não')+', usuário: '+(fbUser?'sim':'não')+')');refreshCloudUi();return false} // sem login: não há nada para sincronizar, não é uma falha
  if(!cloudEnabled()){cdStamp('modo somente local');refreshCloudUi();return false} // modo Somente local: sincronização desligada de propósito
@@ -2318,13 +2318,13 @@ async function queueCloudSave(candidate){
   if(cloudSuppressedVaults.has(envelope?.vaultId)){cloudSyncState='error';cloudSyncInfo='Este cofre foi pausado após um conflito com a nuvem. Abra Configurações > Nuvem e sincronize manualmente para retomar.';refreshCloudUi();return false}
   cloudBusy=true;cloudSyncState='saving';cdStamp('enviando…');refreshCloudUi();
   try{
-   await persistChain;
-   if(!fbUser||fbUser.uid!==account||!cloudEnabled())return false;
-   let current=envelope||candidate;
+   if(!skipWait){cdStamp('aguardando gravação local');await Promise.race([persistChain.catch(()=>{}),new Promise(r=>setTimeout(r,8000))])}
+   if(!fbUser||fbUser.uid!==account||!cloudEnabled()){cdStamp('sessão mudou durante o envio');return false}
+   cdStamp('verificando cofre');let current=envelope||candidate;
    if(!validEnvelope(current))throw Error('Cofre local inválido.');
    if((await dbGet('cloudOwnerVault:'+current.vaultId))!==undefined){const owner=await dbGet('cloudOwnerVault:'+current.vaultId);if(owner&&owner!==account){cloudSyncState='conflict';cloudSyncInfo='O cofre está vinculado a outra conta.';return false}}
    if(enc.encode(JSON.stringify(current)).length>850000)throw Error('Cofre excede o limite para um documento do Firestore.');
-   const ref=cloudDocRef(),snap=await withTimeout(fb.dbMod.getDocFromServer(ref),25000,'Leitura do Firestore');
+   cdStamp('lendo a nuvem');const ref=cloudDocRef(),snap=await withTimeout(fb.dbMod.getDocFromServer(ref),25000,'Leitura do Firestore');
    const remoteDoc=snap.exists()?snap.data()||{}:{};
    const remoteDeleted=remoteDoc.deleted===true;
    let remote=remoteDoc.envelope||null;
@@ -2332,7 +2332,7 @@ async function queueCloudSave(candidate){
    if(remoteDeleted&&!approvedRestore){cloudSyncState='conflict';cloudSyncInfo='O cofre foi apagado da nuvem. Para criar outro backup, escolha novamente o armazenamento em Login em nuvem.';return false}
    if(remote&&!validEnvelope(remote)){cloudSyncState='conflict';cloudSyncInfo='Dados remotos inválidos; envio bloqueado.';return false}
    if(remote&&remote.vaultId!==current.vaultId){cloudSyncState='conflict';cloudSyncInfo='Esta conta contém outro cofre. Nenhuma alteração foi enviada.';return false}
-   const initialPayload=current.payload;
+   cdStamp('nuvem lida; comparando versões');const initialPayload=current.payload;
    let planned=current,mergedSnapshot=null,backupRemote=null;
    if(remote&&remote.payload!==current.payload){
     const known=await dbGet('cloudLastKnown:'+account+':'+current.vaultId);
@@ -2374,7 +2374,7 @@ async function queueCloudSave(candidate){
    // Bloquear sincronização de um estado já alterado durante a análise.
    if(envelope?.payload!==initialPayload){await markCloudPending();return false}
    if(enc.encode(JSON.stringify(planned)).length>850000)throw Error('Mesclagem excede o limite do documento.');
-   let outcome='saved';
+   cdStamp('gravando na nuvem');let outcome='saved';
    await withTimeout(fb.dbMod.runTransaction(fb.store,async tx=>{
     const latestSnap=await tx.get(ref),existing=latestSnap.exists()?latestSnap.data()?.envelope:null;
     const doc=latestSnap.exists()?latestSnap.data()||{}:{};
@@ -2396,10 +2396,10 @@ async function queueCloudSave(candidate){
      cloudSyncInfo='Novas alterações locais preservadas. É necessária nova conciliação.';
     }
    }
-   await recordCloudSynced(account,planned);
+   cdStamp('gravado; confirmando');await recordCloudSynced(account,planned);
    if(approvedRestore)await dbDelete('cloudRestoreApproved:'+account+':'+current.vaultId);
    if(cloudPending&&fbUser?.uid===account&&navigator.onLine)queueMicrotask(()=>queueCloudSave(envelope));
-   return true;
+   cdStamp('concluído com sucesso');return true;
   }catch(e){cloudSyncState='error';cloudSyncInfo=e?.code==='timeout'?e.message+'. Verifique a internet, bloqueadores de conteúdo ou o domínio autorizado.':firebaseMessage(e)+(e?.message&&!firebaseMessageKnown(e)?' · '+String(e.message).slice(0,140):'');cdStamp('erro '+(e?.code||e?.name||'')+': '+String(e?.message||'').slice(0,160));await markCloudPending();console.warn('Sincronização protegida:',e?.code||e?.message);return false}
   finally{if(cloudSyncState==='saving'){cloudSyncState='idle';cdStamp('terminou sem confirmar (há alteração local mais nova ou conciliação pendente); toque em Sincronizar novamente')}cloudBusy=false;refreshCloudUi();refreshStorageClocks()}
  });
@@ -3142,7 +3142,7 @@ document.addEventListener('keydown',e=>{
  }
 });
 document.addEventListener('visibilitychange',()=>{if(document.hidden&&data&&securityOptions().lockOnHide){persistChain.finally(()=>lockVault())}});setInterval(()=>{if(!data)return;const n=securityOptions().lockMinutes;if(n>0&&Date.now()-lastActivity>n*60000){persistChain.finally(()=>lockVault())}},15000);
-window.addEventListener('online',()=>{if(deviceProfileRetry&&fbUser)saveDeviceProfile();if(!fb&&firebaseConfigured())setupFirebase();if(folder&&data&&!cloudOnly())reconnectFolder(false);if(data&&fbUser&&cloudEnabled()&&envelope)queueCloudSave(envelope);refreshStorageClocks()});window.addEventListener('offline',()=>{if(data&&cloudEnabled())cloudSyncState='offline';refreshStorageClocks()});window.addEventListener('focus',()=>{if(folder&&data&&!connected&&!cloudOnly())reconnectFolder(false);if(data&&fbUser&&cloudEnabled()&&navigator.onLine&&hasCloudPending())queueCloudSave(envelope)});
+window.addEventListener('online',()=>{if(deviceProfileRetry&&fbUser)saveDeviceProfile();if(!fb&&firebaseConfigured())setupFirebase();if(folder&&data&&!cloudOnly())silentReconnectAfterUnlock().catch(()=>{});if(data&&fbUser&&cloudEnabled()&&envelope)queueCloudSave(envelope);refreshStorageClocks()});window.addEventListener('offline',()=>{if(data&&cloudEnabled())cloudSyncState='offline';refreshStorageClocks()});window.addEventListener('focus',()=>{if(folder&&data&&!connected&&!cloudOnly())silentReconnectAfterUnlock().catch(()=>{});if(data&&fbUser&&cloudEnabled()&&navigator.onLine&&hasCloudPending())queueCloudSave(envelope)});
 async function init(){if(!window.crypto?.subtle||!window.indexedDB){$('#authRoot').innerHTML='<div class="auth"><section class="authCard"><h1>Não foi possível iniciar</h1><p>O ProtegeAI exige Web Crypto e IndexedDB. Abra em HTTPS ou em um navegador Chromium com armazenamento e criptografia habilitados.</p></section></div>';return}try{await initializeDeviceIdentity();envelope=await dbGet('vault')||null;noPasswordRecord=envelope?await dbGet(noPasswordStoreKey(envelope.vaultId))||null:null;folder=await dbGet('folder')||null;bioRecord=await dbGet('biometric')||null;localSavedAt=Number(await dbGet('localSavedAt'))||0;folderSavedAt=Number(await dbGet('folderSavedAt'))||0;folderSavedRevision=Number(await dbGet('folderSavedRevision')??-1);folderSavedVaultId=await dbGet('folderSavedVaultId')||'';await syncLocalVaultIndex();cloudConnectionRemembered=!!(await dbGet(cloudRememberKey()));offlineCloudOwner=await dbGet('lastCloudUid')||null;if(offlineCloudOwner){const cachedMode=await dbGet('cloudMode:'+offlineCloudOwner);cloudMode=['online','cloud'].includes(cachedMode)?cachedMode:'local';cloudLastSyncedAt=Number(await dbGet(cloudSyncKey(offlineCloudOwner)))||0;cloudPending=!!(await dbGet(cloudPendingKey(offlineCloudOwner)))}if(envelope&&!validEnvelope(envelope)){envelope=null;toast('Cache inválido. Importe um backup.',true)}await tryRestoreLastFolder();authStage=envelope?'unlock':'choice';if(!(await tryNoPasswordEntry()))showAuth();
   // A tela bloqueada prioriza a autenticação biométrica quando já ativada.
   // WebAuthn pode exigir o toque do usuário; não solicitar sem gesto se o navegador bloquear.
